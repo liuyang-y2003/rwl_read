@@ -36,7 +36,7 @@ function [TRm,yr,cores,log]=rwl_read(filename)
 % Contact:  liu_yang@igsnrr.ac.cn
 % Update:   2022-06-20
 % Version:  1.0.0
-%%
+
 log = []; % set default
 
 fileID = fopen(filename); % Read .rwl file
