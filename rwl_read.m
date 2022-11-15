@@ -1,11 +1,17 @@
-function [TRm,yr,cores,log]=rwl_read(filename)
+function [TRm,yr,cores,log]=rwl_read(varargin)
 % Read decadal tree-ring measurement data (.rwl) and correct formating errors 
 % <Syntax>
 % [TRm,yr,cores,log]=rwl_read(filename)
+% [TRm,yr,cores,log]=rwl_read(___,'round')
+% [TRm,yr,cores,log]=rwl_read(___,'zero')
 % 
 % <Input>
 % filename - Name and extension of the file to import, specified as a 
 %     character vector or a string scalar.
+%
+% <Optional Input>
+% 'round' - Option to round decimals, specified as 'filled'.
+% 'zero' - Option to treat zeros as missing values, specified as 'zero'.
 % 
 % <Output>
 % TRm - Tree-ring measurement data from the file, returned as an n-by-p matrix, 
@@ -14,7 +20,7 @@ function [TRm,yr,cores,log]=rwl_read(filename)
 % yr - Years, returned as a vector whose size is n.
 % cores - Core ids, returned as a cell array whose size is p.
 % log - Error log, returned as a two-column matrix. The first colume is the
-%     error trpe and the second column is the line number where the error occurred.
+%     error type and the second column is the line number where the error occurred.
 %     error type list
 %     1. Time error
 %     2. Core ID error
@@ -29,15 +35,29 @@ function [TRm,yr,cores,log]=rwl_read(filename)
 % This function requires insertarray.m.
 % 
 % <Examples>
-% [TRm,yr,cores,log]=rwl_read('test.rwl')
+% [TRm,yr,cores,log]=rwl_read('test.rwl');
+% [TRm,yr,cores,log]=rwl_read('test.rwl','round','zero');
 % 
 % <Copyright>
 % Author:   Yang Liu
 % Contact:  liu_yang@igsnrr.ac.cn
-% Update:   2022-06-20
-% Version:  1.0.0
+% Update:   2022-11-15
+% Version:  1.0.1
 
 log = []; % set default
+filename = varargin{1};
+[rd,z0] = deal(false); % round decimals (rd), treat 0 as missing value (z0)
+
+k = 2;
+while k<=length(varargin)
+    switch lower(varargin{k})
+        case 'round'
+            rd = true;
+        case 'zero'
+            z0 = true;
+    end
+    k = k+1;
+end
 
 fileID = fopen(filename); % Read .rwl file
 Dcell = textscan(fileID,'%s','delimiter',{'\n','\r\n','\r'},'MultipleDelimsAsOne',1,'whitespace',''); % Data in cell format
@@ -59,7 +79,7 @@ end
 Dchar = char(Dcell); % Data in char format
 
 % cheak header lines
-if all(Dchar(1:3,8) == ['1';'2';'3']); % Regular 3 header lines
+if all(Dchar(1:3,8) == ['1';'2';'3']) % Regular 3 header lines
     Dchar(1:3,:)=[];
     line(1:3)=[];
 end
@@ -75,7 +95,7 @@ if sum(ind)>0
 end
 
 % deal with years earlier than -1000 (occupy 5 columns), e.g. ca714.rwl, Line 354
-if ismember('-',Dchar(:,8));
+if ismember('-',Dchar(:,8))
     ind = Dchar(:,8)=='-';
     temp = Dchar(:,8);
     temp(ind)=' ';
@@ -222,11 +242,11 @@ else
 end
 
 % read data
-for n=1:Ncores; % loop over cores
+for n=1:Ncores % loop over cores
     nrows = Crows(n,2) ;  % number of decade lines for this core
     rowstart = Crows(n,1); % first row of this series in C
     X = [];
-    for m = 1:nrows; % loop over decades
+    for m = 1:nrows % loop over decades
         if m == nrows || m == 1
             c = deblank(Dchar(rowstart+m-1,1:12+L1*10)); % deblank the first/last row
         else
@@ -251,7 +271,7 @@ for n=1:Ncores; % loop over cores
         end
         temp = str2num(c(13:end))';
         
-        if m == 1;
+        if m == 1
             % remove leading 9990, e.g. brit5.rwl, Line 4
             if temp(1) == 9990 && find(diff(temp),1) == rem
                 temp(1:rem)=[];
@@ -267,7 +287,7 @@ for n=1:Ncores; % loop over cores
             
             % error 1.4: check if the start year matchs the number of data in the first row
             % e.g. test.rwl, Line 76; az560.rwl, Line 111
-            if rem ~= 10 - length(temp);
+            if rem ~= 10 - length(temp)
                 yr1st = str2double(c(yr1:12)) - rem +10 - length(temp);
                 log = [log;[1.4,line(rowstart+m-1)]];
             else
@@ -295,9 +315,9 @@ for n=1:Ncores; % loop over cores
             end
         end
         X = [X;temp];
-    end;
+    end
     TRm((yr1st:yrend)-yr(1)+1,n) = X;
-end;
+end
 cores=deblank(cores);
 
 ind = find(sum(~isnan(TRm),2),1);
@@ -318,17 +338,22 @@ seq = [seq,[seq(2:end)-1;length(cores)],diff([seq;length(cores)+1])];
 seq = seq(seq(:,3)>1,:);
 if ~isempty(seq)
     for i = size(seq,1):-1:1
-        if isempty(find(sum(~isnan(TRm(:,seq(i,1):seq(i,2))),2,'omitnan')>=2,1))
+        if all(sum(~isnan(TRm(:,seq(i,1):seq(i,2))),2)<2)
             log = [log;[ones(seq(i,3),1)*8,line(Crows(seq(i,1):seq(i,2),1))]];
             TRm(:,seq(i,1)) = mean(TRm(:,seq(i,1):seq(i,2)),2,'omitnan');
             TRm(:,seq(i,1)+1:seq(i,2))=[];
             cores(seq(i,1)+1:seq(i,2))=[];
+            Crows(seq(i,1)+1:seq(i,2),:)=[];
         end
     end
 end
 
 % determine remaining 999 is real data value or missing value
-TRm(TRm<0)=nan;
+if z0
+    TRm(TRm<=0)=nan;
+else
+    TRm(TRm<0)=nan;
+end
 if ~isempty(find(TRm==999,1))
     if ~isempty(find((TRm>900 & TRm<1100 & TRm~=999),1))
         TRm(TRm==999) = nan; % change to NaN
@@ -338,6 +363,7 @@ end
 ind = sum(~isnan(TRm),1)==0; % remove cores with all NaN values
 cores(ind)=[];
 TRm(:,ind)=[];
+Crows(ind,:)=[];
 if isempty(TRm)
     log = [];
 end
@@ -349,11 +375,21 @@ TR2 = [ic';TRm]';
 TR2(isnan(TR2)) = -0.1;
 [~,ia,~] = unique(TR2,'stable','rows');
 if length(ia)<size(TRm,2)
-    log = [log;[ones(size(TRm,2)-length(ia),1)*4,line(Crows(setdiff(1:size(TRm,2),ia),1))]];
+    log = [log;[ones(size(TRm,2)-length(ia),1)*4.1,line(Crows(setdiff(1:size(TRm,2),ia),1))]];
     cores = cores(ia);
     TRm = TRm(:,ia);
+    Crows = Crows(ia,:);
+end
+% e.g. test.rwl, Lines 91-95
+[~,ia,~] = unique(cores);
+if length(ia)<size(TRm,2)
+    log = [log;[ones(size(TRm,2)-length(ia),1)*4.2,line(Crows(setdiff(1:size(TRm,2),ia),1))]];
 end
 
 if ~isempty(log)
     log = floor(log);
+end
+
+if rd
+    TRm = round(TRm);
 end
